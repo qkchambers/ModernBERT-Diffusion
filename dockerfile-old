@@ -1,0 +1,57 @@
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
+
+# Set working directory
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    git \
+    build-essential \
+    curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Miniconda
+RUN wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O /tmp/miniconda.sh && \
+    bash /tmp/miniconda.sh -b -p /opt/conda && \
+    rm /tmp/miniconda.sh
+
+# Add conda to PATH
+ENV PATH=/opt/conda/bin:$PATH
+
+# Copy the environment file
+COPY environment.yaml .
+COPY efficient-kan .
+
+# Create the conda environment using conda
+RUN conda env create -f environment.yaml
+
+# Set up conda activation
+RUN echo "conda activate bert24" >> ~/.bashrc
+
+# Make RUN commands use the new environment
+SHELL ["conda", "run", "-n", "bert24", "/bin/bash", "-c"]
+
+# Install flash attention (requires CUDA)
+RUN pip install "flash_attn==2.6.3" --no-build-isolation
+RUN pip install -e efficient-kan/
+
+# Set environment variables
+ENV CONDA_DEFAULT_ENV=bert24
+ENV CUDA_HOME=/usr/local/cuda
+ENV PATH=/opt/conda/envs/bert24/bin:$CUDA_HOME/bin:$PATH
+ENV LD_LIBRARY_PATH=/opt/conda/envs/bert24/lib:$CUDA_HOME/lib64:$LD_LIBRARY_PATH
+ENV NCCL_SHM_DISABLE=1
+ENV NCCL_P2P_DISABLE=1
+
+# Create entrypoint script
+RUN echo '#!/bin/bash\nsource /opt/conda/etc/profile.d/conda.sh\nconda activate bert24\nexec "$@"' > /usr/local/bin/entrypoint.sh && \
+    chmod +x /usr/local/bin/entrypoint.sh
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+CMD ["/bin/bash"]
+
+# Install Python packages in the conda environment
+#RUN pip install -e /workspaces/ModernBERT/efficient-kan/ && \
+#    pip install "flash_attn==2.6.3" --no-build-isolation
